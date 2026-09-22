@@ -55,7 +55,7 @@ function renderChatHistory() {
 
     let html = '<div class="chat-container">';
     history.forEach(msg => {
-        if (msg.role === 'ai') {
+        if (msg.role === 'assistant') {
             html += `<div class="chat-bubble chat-ai"><strong>Groq:</strong><br>${safeMarkdown(msg.content)}</div>`;
         } else {
             const bg = msg.type === 'ask' ? 'background-color: #E2DDD5;' : '';
@@ -64,7 +64,7 @@ function renderChatHistory() {
         }
     });
     html += '</div>';
-    
+
     output.innerHTML = html;
     output.scrollTop = output.scrollHeight;
 }
@@ -85,6 +85,15 @@ function safeMarkdown(text) {
     return text.replace(/\n/g, '<br>');
 }
 
+// Build the API-shaped history payload from our internal chat_history.
+// Strips our internal-only fields (type, timestamp) that the API doesn't accept.
+function buildApiHistory() {
+    const history = diagnosticsDb[currentId].chat_history || [];
+    return history
+        .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+        .slice(-8)
+        .map(msg => ({ role: msg.role, content: msg.content }));
+}
 // Update Groq call to push to the array and save
 async function simulateGroqCall() {
     if (!currentId) return alert("Select a PC first.");
@@ -92,7 +101,7 @@ async function simulateGroqCall() {
     const btn = document.getElementById('btnGroq');
     const output = document.getElementById('aiOutput');
     btn.innerText = "Generating...";
-    
+
     if (diagnosticsDb[currentId].chat_history.length === 0) {
         output.innerHTML = '<span class="placeholder-text">Waiting on Groq API...</span>';
     }
@@ -105,14 +114,15 @@ async function simulateGroqCall() {
                 id: currentId,
                 hardware: diagnosticsDb[currentId].hardware,
                 symptoms: diagnosticsDb[currentId].symptoms,
-                notes: diagnosticsDb[currentId].notes_so_far
+                notes: diagnosticsDb[currentId].notes_so_far,
+                chat_history: buildApiHistory()
             })
         });
 
         const result = await response.json();
         if (result.success) {
             // Save the AI response permanently
-            diagnosticsDb[currentId].chat_history.push({ role: 'ai', content: result.data });
+            diagnosticsDb[currentId].chat_history.push({ role: 'assistant', content: result.data });
             await saveNotesSilently();
             renderChatHistory();
         } else {
@@ -150,21 +160,23 @@ async function submitBenchQuery() {
         notesPayload += `\n\n[Technician Question - Do not log to report]: ${query}`;
     }
 
-    // Save the user's message to history
-    diagnosticsDb[currentId].chat_history.push({ 
-        role: 'user', 
-        type: currentMode, 
-        content: query, 
-        timestamp: timestamp 
+    // Save the user's message to history (internal shape with type/timestamp for display)
+    diagnosticsDb[currentId].chat_history.push({
+        role: 'user',
+        type: currentMode,
+        content: query,
+        timestamp: timestamp
     });
-    
+
     inputEl.value = "";
     renderChatHistory(); // Show user bubble immediately
 
     // Add temporary loading indicator
     const container = document.querySelector('.chat-container');
-    container.innerHTML += `<div id="loadingBubble" class="chat-bubble chat-ai"><i>Querying Groq...</i></div>`;
-    document.getElementById('aiOutput').scrollTop = document.getElementById('aiOutput').scrollHeight;
+    if (container) {
+        container.innerHTML += `<div id="loadingBubble" class="chat-bubble chat-ai"><i>Querying Groq...</i></div>`;
+        document.getElementById('aiOutput').scrollTop = document.getElementById('aiOutput').scrollHeight;
+    }
 
     try {
         const response = await fetch('/api/groq', {
@@ -174,16 +186,19 @@ async function submitBenchQuery() {
                 id: currentId,
                 hardware: diagnosticsDb[currentId].hardware,
                 symptoms: diagnosticsDb[currentId].symptoms,
-                notes: notesPayload
+                notes: notesPayload,
+                chat_history: buildApiHistory()
             })
         });
 
         const result = await response.json();
         if (result.success) {
-            diagnosticsDb[currentId].chat_history.push({ role: 'ai', content: result.data });
+            diagnosticsDb[currentId].chat_history.push({ role: 'assistant', content: result.data });
             await saveNotesSilently();
-            renderChatHistory();
+        } else {
+            alert(`Error: ${result.error}`);
         }
+        renderChatHistory();
     } catch (err) {
         alert("Failed to connect to backend.");
         document.getElementById('loadingBubble')?.remove();
@@ -218,8 +233,8 @@ async function saveNotesSilently() {
         await fetch('/api/notes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                id: currentId, 
+            body: JSON.stringify({
+                id: currentId,
                 notes: diagnosticsDb[currentId].notes_so_far,
                 chat_history: diagnosticsDb[currentId].chat_history || []
             })

@@ -2,6 +2,7 @@ package server;
 
 import static spark.Spark.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -12,13 +13,29 @@ import java.time.Duration;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 public class ShopServer {
 
     private static final int DEFAULT_PORT = 4568;
     private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
+    private static final String MODEL = "openai/gpt-oss-120b";
 
+    private static final String SYSTEM_PROMPT =
+    "You are an experienced industrial PC repair technician helping a colleague on the bench.\n\n" +
+    "Respond to ONLY the technician's latest note. Do not re-summarize or re-diagnose earlier problems.\n\n" +
+    "Match the response format to the note's intent:\n" +
+    "- If the note is a STATUS UPDATE (symptom changed, observation added), give focused next steps for just that change.\n" +
+    "- If the note is a QUESTION (contains '?', 'should I', 'is it worth', 'can I'), answer it directly in 1-3 sentences. Do NOT give a checklist unless specifically asked.\n" +
+    "- If the note says the problem is FIXED, give 2-3 short verification or monitoring points. Do NOT give a checklist.\n" +
+    "- If the note is a NEW SYMPTOM, give a focused diagnostic list of no more than 5 steps.\n\n" +
+    "Hard rules:\n" +
+    "- Never include a step the technician has already done or mentioned. Check the previous notes carefully.\n" +
+    "- Never include more than 5 numbered steps. Use fewer if the situation doesn't warrant 5.\n" +
+    "- Never start with 'Power down, unplug' unless the technician explicitly needs to open the case.\n" +
+    "- No preamble, no 'here is a checklist', no closing summary.";
     /**
      * Resolves the data directory using a precedence chain:
      *   1. -Dshop.data=/path/to/dir  (explicit override, mostly for testing)
@@ -35,24 +52,22 @@ public class ShopServer {
             } catch (IOException e) {
                 System.out.println("WARNING: Could not create override data dir " + p + ": " + e.getMessage());
             }
+            System.out.println("Using override data directory: " + p.toAbsolutePath());
             return p;
         }
 
         // 2. Portable mode: a 'data' folder sitting next to the running JAR
-        try {
-            Path jarDir = Paths.get(
-                    ShopServer.class.getProtectionDomain()
-                            .getCodeSource().getLocation().toURI()
-            ).getParent();
-
-            if (jarDir != null) {
-                Path portable = jarDir.resolve("data");
-                if (Files.isDirectory(portable)) {
-                    return portable;
-                }
+        Path jarDir = getJarDirectory();
+        if (jarDir != null) {
+            Path portable = jarDir.resolve("data");
+            if (Files.isDirectory(portable)) {
+                System.out.println("Portable mode: found data folder at " + portable);
+                return portable;
+            } else {
+                System.out.println("Checked for portable data folder at " + portable + " - not found");
             }
-        } catch (Exception e) {
-            // Running from IDE / unusual classloader; fall through to default.
+        } else {
+            System.out.println("Could not determine JAR directory; skipping portable mode check");
         }
 
         // 3. Default: per-user application data directory
@@ -77,7 +92,27 @@ public class ShopServer {
         return dataDir;
     }
 
-    // Reads directly from the obscure file, falling back to a dummy key if missing
+    /**
+     * Determines the directory containing the running JAR. Uses java.class.path,
+     * which the JVM sets reliably when launched via 'java -jar'. Returns null
+     * if we can't determine it (e.g. running from an IDE).
+     */
+    private static Path getJarDirectory() {
+        String classpath = System.getProperty("java.class.path", "");
+        if (classpath.isEmpty()) return null;
+
+        for (String entry : classpath.split(File.pathSeparator)) {
+            if (entry.toLowerCase().endsWith(".jar")) {
+                Path p = Paths.get(entry).toAbsolutePath();
+                if (Files.isRegularFile(p)) {
+                    return p.getParent();
+                }
+            }
+        }
+        return null;
+    }
+
+    // Reads the API key from a file literally named A_oi_t in the working directory
     private static String resolveApiKey() {
         Path keyFile = Paths.get("A_oi_t");
 
@@ -153,6 +188,7 @@ public class ShopServer {
         public String hardware;
         public String symptoms;
         public String notes;
+        public JsonArray chat_history;
     }
 
     static class ApiResponse {
@@ -192,7 +228,7 @@ public class ShopServer {
             return Files.readString(diagFile);
         });
 
-        // Query Groq API with sanitized payload
+        // Query Groq API with sanitized payload and multi-turn conversation history
         post("/api/groq", (req, res) -> {
             res.type("application/json");
             ApiResponse out = new ApiResponse();
@@ -206,21 +242,36 @@ public class ShopServer {
             try {
                 GroqRequest input = gson.fromJson(req.body(), GroqRequest.class);
 
-                String prompt = String.format(
-                    "You are an expert industrial PC repair technician. Provide a concise, step-by-step diagnostic checklist.\n" +
-                    "Hardware: %s\nSymptoms: %s\nTechnician Notes so far: %s",
-                    input.hardware, input.symptoms, input.notes == null ? "None" : input.notes
-                );
+                JsonArray messagesArray = new JsonArray();
 
-                JsonObject message = new JsonObject();
-                message.addProperty("role", "user");
-                message.addProperty("content", prompt);
+                // System message: sets persona and rules once per conversation
+                JsonObject systemMsg = new JsonObject();
+                systemMsg.addProperty("role", "system");
+                systemMsg.addProperty("content", SYSTEM_PROMPT);
+                messagesArray.add(systemMsg);
 
-                com.google.gson.JsonArray messagesArray = new com.google.gson.JsonArray();
-                messagesArray.add(message);
+                // Replay prior turns so the model has context
+                if (input.chat_history != null) {
+                    for (JsonElement el : input.chat_history) {
+                        messagesArray.add(el);
+                    }
+                }
+
+                // Current turn: the technician's latest note, framed as the actual question
+                JsonObject userMsg = new JsonObject();
+                userMsg.addProperty("role", "user");
+                userMsg.addProperty("content", String.format(
+                    "Machine: %s\nOriginal symptoms: %s\nTechnician's latest note: %s\n\n" +
+                    "Respond only to the latest note. Do not repeat steps already tried.",
+                    input.hardware,
+                    input.symptoms,
+                    (input.notes == null || input.notes.isBlank()) ? "(none yet)" : input.notes
+                ));
+                messagesArray.add(userMsg);
 
                 JsonObject payload = new JsonObject();
-                payload.addProperty("model", "openai/gpt-oss-120b");
+                payload.addProperty("model", MODEL);
+                payload.addProperty("max_tokens", 800);
                 payload.add("messages", messagesArray);
 
                 HttpRequest groqReq = HttpRequest.newBuilder()
@@ -270,17 +321,14 @@ public class ShopServer {
                 if (diagData.has(targetId)) {
                     JsonObject targetPc = diagData.getAsJsonObject(targetId);
 
-                    // Save manual notes
                     if (incoming.has("notes")) {
                         targetPc.addProperty("notes_so_far", incoming.get("notes").getAsString());
                     }
-                    // Save the AI conversation history array
                     if (incoming.has("chat_history")) {
                         targetPc.add("chat_history", incoming.get("chat_history").getAsJsonArray());
                     }
 
-                    // Back up the current file before we touch it. Cheap insurance
-                    // for FAT32/exFAT sticks where ATOMIC_MOVE may not be honored.
+                    // Back up the current file before we touch it.
                     if (Files.exists(diagFile)) {
                         Path backupFile = diagFile.resolveSibling("diagnostics.bak");
                         try {
