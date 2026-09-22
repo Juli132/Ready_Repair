@@ -29,6 +29,14 @@ jobs:
     - name: Build the JAR with Maven
       run: mvn -B clean package --file pom.xml
 
+    - name: Verify ShopServer.class is in the JAR
+      run: |
+        jar tf target/ready-repair-jar-with-dependencies.jar | grep -q '^server/ShopServer.class$' \
+          || (echo "FATAL: server/ShopServer.class missing from JAR." && \
+              echo "Check that ShopServer.java lives at src/main/java/server/ShopServer.java" && \
+              exit 1)
+        echo "OK: ShopServer.class present in JAR"
+
     - name: Create custom JRE with jlink
       run: |
         jlink --module-path "$JAVA_HOME/jmods" \
@@ -38,6 +46,11 @@ jobs:
               --no-header-files \
               --no-man-pages
 
+    - name: Verify bundled JRE works
+      run: |
+        ./custom-jre/bin/java.exe -version
+        echo "OK: bundled JRE runs"
+
     - name: Prepare Release Package
       run: |
         mkdir release-package
@@ -45,6 +58,24 @@ jobs:
         cp run.bat release-package/
         cp -r webpage release-package/
         cp -r custom-jre release-package/jre
+
+    - name: Smoke-test the packaged JAR with the bundled JRE
+      run: |
+        cd release-package
+        # Start the server in the background, wait for port 4568, then kill it.
+        ./jre/bin/java.exe -jar ready-repair.jar &
+        SERVER_PID=$!
+        for i in $(seq 1 15); do
+          if powershell -NoProfile -Command "try { \$c=New-Object Net.Sockets.TcpClient; \$c.Connect('127.0.0.1',4568); \$c.Close(); exit 0 } catch { exit 1 }"; then
+            echo "OK: server responded on port 4568"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "FATAL: server never came up on port 4568"
+        kill $SERVER_PID 2>/dev/null || true
+        exit 1
 
     - name: Create Archive
       run: |
