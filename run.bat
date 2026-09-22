@@ -7,6 +7,6 @@ echo.
 start http://localhost:4568
 
 :: Use the bundled JRE to run the JAR alongside the lib folder dependencies
-"jre\bin\java.exe" -cp "lib\*;ready_repair-1.0.jar" server.ShopServer
+"jre\bin\java.exe" -cp "lib\*;ready_repair.jar" server.ShopServer
 
 pause
