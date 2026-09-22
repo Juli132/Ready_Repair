@@ -10,17 +10,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            archive_cmd: 7z a -tzip ../ready-repair-${{ github.ref_name }}-windows.zip *
-            asset_name: ready-repair-${{ github.ref_name }}-windows.zip
-          - os: ubuntu-latest
-            archive_cmd: tar -czvf ../ready-repair-${{ github.ref_name }}-linux.tar.gz .
-            asset_name: ready-repair-${{ github.ref_name }}-linux.tar.gz
-
-    runs-on: ${{ matrix.os }} 
+    runs-on: windows-latest
     
     defaults:
       run:
@@ -30,7 +20,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up JDK 25
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         java-version: '25'
         distribution: 'temurin'
@@ -41,7 +31,7 @@ jobs:
 
     - name: Create custom JRE with jlink
       run: |
-        jlink --module-path $JAVA_HOME/jmods \
+        jlink --module-path "$JAVA_HOME/jmods" \
               --add-modules java.base,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.naming,java.net.http,java.prefs,java.security.jgss,java.security.sasl,java.sql,java.transaction.xa,java.xml \
               --output custom-jre \
               --compress=2 \
@@ -51,7 +41,7 @@ jobs:
     - name: Prepare Release Package
       run: |
         mkdir release-package
-        cp target/ready-repair-1.0-SNAPSHOT.jar release-package/ready-repair.jar
+        cp target/ready-repair.jar release-package/
         cp run.bat release-package/
         cp -r webpage release-package/
         cp -r custom-jre release-package/jre
@@ -59,11 +49,11 @@ jobs:
     - name: Create Archive
       run: |
         cd release-package
-        ${{ matrix.archive_cmd }}
+        7z a -tzip ../ready-repair-${{ github.ref_name }}-windows.zip *
 
     - name: Auto-Create Release (As Draft)
       uses: softprops/action-gh-release@v2
       with:
         draft: true
         generate_release_notes: true
-        files: ${{ matrix.asset_name }}
+        files: ready-repair-${{ github.ref_name }}-windows.zip
