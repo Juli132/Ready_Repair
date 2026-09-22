@@ -1,10 +1,11 @@
 @echo off
 title Shop Diagnostics Web Server
-echo Starting the Shop Diagnostics server using the bundled JRE...
+cd /d "%~dp0"
+echo Starting the Shop Diagnostics server from USB...
 echo.
 
-start http://localhost:4568
+start "" http://localhost:4568
 
-"jre\bin\java.exe" -jar "ready-repair.jar"
+"%~dp0jre\bin\java.exe" -jar "%~dp0ready-repair.jar"
 
 pause

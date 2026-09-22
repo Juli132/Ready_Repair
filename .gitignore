@@ -7,3 +7,7 @@ ready-repair.jar
 /target/
 /.vscode/
 .mvn/
+
+data/
+*.tmp
+*.bak
