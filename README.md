@@ -9,7 +9,7 @@ A local-first industrial PC diagnostic tool featuring an AI-assisted workbench.
 
 ## Quick Start (For Users)
 
-1. Download the latest release package.
+1. Download the latest [release](https://github.com/Juli132/Ready_Repair/releases/) package.
 2. Create an extensionless file named `A_oi_t` in the folder and paste your Groq API key inside it using Notepad.
 3. Double-click `run.bat` to launch the application.
 4. Open `http://localhost:4568` in your browser.
