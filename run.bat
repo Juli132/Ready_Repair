@@ -6,7 +6,7 @@ echo.
 :: Automatically open the default web browser
 start http://localhost:4568
 
-:: Use the bundled JRE to run the JAR alongside the lib folder dependencies
+
 "jre\bin\java.exe" -cp "lib\*;ready_repair.jar" server.ShopServer
 
 pause
