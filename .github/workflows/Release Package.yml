@@ -41,7 +41,7 @@ jobs:
     - name: Prepare Release Package
       run: |
         mkdir release-package
-        cp target/ready-repair.jar release-package/
+        cp target/ready-repair-jar-with-dependencies.jar release-package/ready-repair.jar
         cp run.bat release-package/
         cp -r webpage release-package/
         cp -r custom-jre release-package/jre
