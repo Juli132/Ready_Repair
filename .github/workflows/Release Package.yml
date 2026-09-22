@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    
+
     defaults:
       run:
         shell: bash
@@ -62,7 +62,6 @@ jobs:
     - name: Smoke-test the packaged JAR with the bundled JRE
       run: |
         cd release-package
-        # Start the server in the background, wait for port 4568, then kill it.
         ./jre/bin/java.exe -jar ready-repair.jar &
         SERVER_PID=$!
         for i in $(seq 1 15); do
@@ -77,14 +76,26 @@ jobs:
         kill $SERVER_PID 2>/dev/null || true
         exit 1
 
-    - name: Create Archive
+    - name: Create Archive (standard)
       run: |
         cd release-package
         7z a -tzip ../ready-repair-${{ github.ref_name }}-windows.zip *
+
+    - name: Add empty data folder for portable variant
+      run: |
+        mkdir -p release-package/data
+        touch release-package/data/.keep
+
+    - name: Create Archive (portable)
+      run: |
+        cd release-package
+        7z a -tzip ../ready-repair-${{ github.ref_name }}-windows-portable.zip *
 
     - name: Auto-Create Release (As Draft)
       uses: softprops/action-gh-release@v2
       with:
         draft: true
         generate_release_notes: true
-        files: ready-repair-${{ github.ref_name }}-windows.zip
+        files: |
+          ready-repair-${{ github.ref_name }}-windows.zip
+          ready-repair-${{ github.ref_name }}-windows-portable.zip
