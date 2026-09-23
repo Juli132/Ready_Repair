@@ -10,7 +10,26 @@
   <body>
     <!-- Sidebar Queue -->
     <div class="sidebar">
-      <div class="sidebar-header">My Repair Queue</div>
+      <div class="sidebar-header">
+        My Repair Queue
+
+        <div class="sidebar-actions">
+          <button id="btnReimport" class="btn btn-small" onclick="reimportStored()" style="display:none;">↻ Refresh from sheet</button>
+          <button id="btnToggleImport" class="btn btn-small" onclick="toggleImportPanel()">+ Add jobs from Excel</button>
+          <button class="btn btn-small btn-danger-outline" onclick="clearAllJobs()">Clear all</button>
+        </div>
+
+        <div id="importPanel" class="import-panel" style="display: none;">
+          <input type="file" id="excelFile" accept=".xlsx, .xls" />
+          <button onclick="previewExcel()" class="btn btn-small" id="btnPreview">Preview</button>
+
+          <div id="mappingGateway" class="mapping-gateway">
+            <div class="mapping-gateway-title">Which columns go where?</div>
+            <div id="radioListContainer" class="radio-list"></div>
+            <button onclick="executeImport()" class="btn btn-wide">Confirm &amp; Import</button>
+          </div>
+        </div>
+      </div>
       <ul class="queue-list" id="queueList">
         <!-- Populated by JS -->
       </ul>
@@ -23,13 +42,9 @@
         <span id="activeStatus"></span>
       </div>
 
-      <!-- NEW TWO-COLUMN LAYOUT -->
-      <div style="display: flex; gap: 20px; align-items: stretch; height: calc(100vh - 120px);">
-        
-        <!-- LEFT COLUMN: Hardware Profile & Manual Notes -->
-        <div style="flex: 1; display: flex; flex-direction: column; gap: 20px;">
-          
-          <div class="card" style="margin: 0;">
+      <div class="workbench-columns">
+        <div class="workbench-left">
+          <div class="card">
             <h2>Hardware Profile</h2>
             <div class="data-grid">
               <div class="data-field">
@@ -43,49 +58,39 @@
             </div>
           </div>
 
-          <div class="card" style="margin: 0; flex-grow: 1; display: flex; flex-direction: column;">
+          <div class="card card-grow">
             <h2>Manual Repair Notes</h2>
-            <textarea
-              id="manualNotes"
-              placeholder="Enter notes on what you actually fixed..."
-              style="flex-grow: 1; margin-bottom: 10px; resize: none; padding: 10px; border: 1px solid var(--border); border-radius: 4px;"
-            ></textarea>
+            <textarea id="manualNotes" class="notes-textarea" placeholder="Enter notes on what you actually fixed..."></textarea>
             <div class="save-bar">
               <button class="btn" onclick="saveNotes()">Save to Local JSON</button>
             </div>
           </div>
         </div>
 
-        <!-- RIGHT COLUMN: AI Chat Sidebar -->
-        <div class="card ai-section" style="flex: 1.2; margin: 0; display: flex; flex-direction: column;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h2 style="margin: 0;">AI Diagnostic Assistant</h2>
-            <button class="btn" id="btnGroq" onclick="simulateGroqCall()">
-              Generate Steps
-            </button>
+        <div class="card ai-section card-ai">
+          <div class="ai-header">
+            <h2>AI Diagnostic Assistant</h2>
+            <button class="btn" id="btnGroq" onclick="simulateGroqCall()">Generate Steps</button>
           </div>
-          
-          <!-- Scrollable Chat Window -->
-          <div class="ai-output" id="aiOutput" style="flex-grow: 1; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+
+          <div class="ai-output" id="aiOutput">
             <span class="placeholder-text">Click "Generate Steps" to request a troubleshooting checklist...</span>
           </div>
-          
-          <!-- Interactive Follow-Up Bar -->
+
           <div class="followup-wrapper">
-            <div class="mode-toggle-bar" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
-              <span style="font-size: 0.85rem; color: #666; font-weight: bold;">Mode:</span>
+            <div class="mode-toggle-bar">
+              <span class="mode-label">Mode:</span>
               <button type="button" id="modeLog" class="mode-chip active" onclick="setQuestionMode('log')">📝 Log &amp; Save</button>
               <button type="button" id="modeAsk" class="mode-chip" onclick="setQuestionMode('ask')">💬 Just Ask</button>
-              <button type="button" class="btn" style="background-color: #8C3B3B; margin-left: auto; padding: 4px 10px; font-size: 0.8rem;" onclick="clearAIHistory()">Clear History</button>
+              <button type="button" class="btn btn-danger" onclick="clearAIHistory()">Clear History</button>
             </div>
-            <div style="display: flex; gap: 10px;">
-              <input type="text" id="followUpInput" placeholder="Type observation or question (Press Enter)..." style="flex-grow: 1; padding: 10px; border: 1px solid var(--border); border-radius: 4px;">
+            <div class="followup-input-row">
+              <input type="text" id="followUpInput" placeholder="Type observation or question (Press Enter)..." />
               <button id="btnSubmitQuery" class="btn" onclick="submitBenchQuery()">Send</button>
             </div>
           </div>
         </div>
-
-      </div> <!-- End Two-Column Layout -->
+      </div>
     </div>
 
     <script src="scripts/app.js"></script>

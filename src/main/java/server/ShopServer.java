@@ -4,12 +4,14 @@ import static spark.Spark.*;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.*;
 import java.time.Duration;
+import javax.servlet.MultipartConfigElement;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -36,14 +38,8 @@ public class ShopServer {
     "- Never include more than 5 numbered steps. Use fewer if the situation doesn't warrant 5.\n" +
     "- Never start with 'Power down, unplug' unless the technician explicitly needs to open the case.\n" +
     "- No preamble, no 'here is a checklist', no closing summary.";
-    /**
-     * Resolves the data directory using a precedence chain:
-     *   1. -Dshop.data=/path/to/dir  (explicit override, mostly for testing)
-     *   2. a 'data' folder next to the running JAR (portable / USB mode)
-     *   3. the OS-appropriate per-user application data directory (default)
-     */
+
     private static Path getDataDirectory() {
-        // 1. Explicit override
         String override = System.getProperty("shop.data");
         if (override != null && !override.isBlank()) {
             Path p = Paths.get(override);
@@ -56,7 +52,6 @@ public class ShopServer {
             return p;
         }
 
-        // 2. Portable mode: a 'data' folder sitting next to the running JAR
         Path jarDir = getJarDirectory();
         if (jarDir != null) {
             Path portable = jarDir.resolve("data");
@@ -70,7 +65,6 @@ public class ShopServer {
             System.out.println("Could not determine JAR directory; skipping portable mode check");
         }
 
-        // 3. Default: per-user application data directory
         String userHome = System.getProperty("user.home");
         String os = System.getProperty("os.name", "").toLowerCase();
         Path dataDir;
@@ -92,11 +86,6 @@ public class ShopServer {
         return dataDir;
     }
 
-    /**
-     * Determines the directory containing the running JAR. Uses java.class.path,
-     * which the JVM sets reliably when launched via 'java -jar'. Returns null
-     * if we can't determine it (e.g. running from an IDE).
-     */
     private static Path getJarDirectory() {
         String classpath = System.getProperty("java.class.path", "");
         if (classpath.isEmpty()) return null;
@@ -112,7 +101,6 @@ public class ShopServer {
         return null;
     }
 
-    // Reads the API key from a file literally named A_oi_t in the working directory
     private static String resolveApiKey() {
         Path keyFile = Paths.get("A_oi_t");
 
@@ -131,55 +119,22 @@ public class ShopServer {
         return "dummy_test_key";
     }
 
-    // Seeds default JSON files on launch if missing
     private static void seedStorageIfMissing(Gson gson, Path dataDir) {
         Path repairsFile = dataDir.resolve("repairs.json");
         Path diagnosticsFile = dataDir.resolve("diagnostics.json");
 
         try {
             if (!Files.exists(repairsFile)) {
-                JsonObject repairsSeed = new JsonObject();
-
-                JsonObject jl1 = new JsonObject();
-                jl1.addProperty("rma_number", "RMA-84213");
-                jl1.addProperty("customer", "Apex Controls");
-                jl1.addProperty("asset_tag", "AC-9901");
-                jl1.addProperty("received_date", "2026-09-21");
-                jl1.addProperty("diagnostic_ref", "JL-1");
-                repairsSeed.add("JL-1", jl1);
-
-                JsonObject jl2 = new JsonObject();
-                jl2.addProperty("rma_number", "RMA-84214");
-                jl2.addProperty("customer", "Vanguard Logistics");
-                jl2.addProperty("asset_tag", "VL-4412");
-                jl2.addProperty("received_date", "2026-09-21");
-                jl2.addProperty("diagnostic_ref", "JL-2");
-                repairsSeed.add("JL-2", jl2);
-
-                Files.writeString(repairsFile, gson.toJson(repairsSeed));
-                System.out.println("Created default repairs.json at " + repairsFile.toAbsolutePath());
+                Files.writeString(repairsFile, "{}");
+                System.out.println("Created empty repairs.json at " + repairsFile.toAbsolutePath());
             }
 
             if (!Files.exists(diagnosticsFile)) {
-                JsonObject diagSeed = new JsonObject();
-
-                JsonObject jl1 = new JsonObject();
-                jl1.addProperty("symptoms", "PC won't POST, fans spin, no display output");
-                jl1.addProperty("hardware", "Dell OptiPlex 7090, i5-11500, 16GB RAM");
-                jl1.addProperty("notes_so_far", "Reseated RAM, no change");
-                diagSeed.add("JL-1", jl1);
-
-                JsonObject jl2 = new JsonObject();
-                jl2.addProperty("symptoms", "Blue screen on boot: INACCESSIBLE_BOOT_DEVICE");
-                jl2.addProperty("hardware", "Lenovo ThinkStation P340, NVMe SSD");
-                jl2.addProperty("notes_so_far", "");
-                diagSeed.add("JL-2", jl2);
-
-                Files.writeString(diagnosticsFile, gson.toJson(diagSeed));
-                System.out.println("Created default diagnostics.json at " + diagnosticsFile.toAbsolutePath());
+                Files.writeString(diagnosticsFile, "{}");
+                System.out.println("Created empty diagnostics.json at " + diagnosticsFile.toAbsolutePath());
             }
         } catch (IOException e) {
-            System.err.println("Failed to seed initial data files: " + e.getMessage());
+            System.err.println("Failed to create initial data files: " + e.getMessage());
         }
     }
 
@@ -220,7 +175,6 @@ public class ShopServer {
 
         System.out.println("Shop Diagnostics Server running on http://localhost:" + DEFAULT_PORT);
 
-        // Serve decoupled diagnostics.json to the frontend
         get("/api/diagnostics", (req, res) -> {
             res.type("application/json");
             Path diagFile = dataDir.resolve("diagnostics.json");
@@ -228,7 +182,119 @@ public class ShopServer {
             return Files.readString(diagFile);
         });
 
-        // Query Groq API with sanitized payload and multi-turn conversation history
+        // PREVIEW: Reads headers and returns them along with any saved column config
+        post("/api/preview", (req, res) -> {
+            res.type("application/json");
+            ApiResponse out = new ApiResponse();
+            req.attribute("org.eclipse.jetty.multipartConfig", new MultipartConfigElement("/temp"));
+
+            try (InputStream is = req.raw().getPart("file").getInputStream()) {
+                Path tempFile = Files.createTempFile("preview_", ".xlsx");
+                Files.copy(is, tempFile, StandardCopyOption.REPLACE_EXISTING);
+
+                Path configFile = dataDir.resolve("header_config.json");
+                JsonObject savedConfig = Files.exists(configFile)
+                        ? gson.fromJson(Files.readString(configFile), JsonObject.class)
+                        : new JsonObject();
+
+                JsonObject responsePayload = new JsonObject();
+                responsePayload.add("headers", gson.toJsonTree(ExcelImporter.extractHeaders(tempFile.toFile())));
+                responsePayload.add("config", savedConfig);
+
+                out.success = true;
+                out.data = gson.toJson(responsePayload);
+                Files.deleteIfExists(tempFile);
+            } catch (Exception e) {
+                out.success = false;
+                out.error = e.getMessage();
+            }
+            return gson.toJson(out);
+        });
+
+        // IMPORT: Reads config, saves the sheet, imports. Stores a copy as last_import.xlsx.
+        post("/api/import", (req, res) -> {
+            res.type("application/json");
+            ApiResponse out = new ApiResponse();
+            req.attribute("org.eclipse.jetty.multipartConfig", new MultipartConfigElement("/temp"));
+
+            try {
+                InputStream configStream = req.raw().getPart("config").getInputStream();
+                String configJsonStr = new String(
+                        configStream.readAllBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8
+                );
+                JsonObject mappingConfig = gson.fromJson(configJsonStr, JsonObject.class);
+
+                Path configFile = dataDir.resolve("header_config.json");
+                Files.writeString(configFile, gson.toJson(mappingConfig));
+
+                try (InputStream fileStream = req.raw().getPart("file").getInputStream()) {
+                    Path tempFile = Files.createTempFile("import_", ".xlsx");
+                    Files.copy(fileStream, tempFile, StandardCopyOption.REPLACE_EXISTING);
+
+                    // Persist the sheet so the refresh button can find it later.
+                    Path storedFile = dataDir.resolve("last_import.xlsx");
+                    Files.copy(tempFile, storedFile, StandardCopyOption.REPLACE_EXISTING);
+
+                    String summary = ExcelImporter.importShopData(tempFile.toFile(), dataDir, gson, mappingConfig);
+                    Files.deleteIfExists(tempFile);
+
+                    out.success = true;
+                    out.data = summary;
+                }
+            } catch (Exception e) {
+                out.success = false;
+                out.error = e.getMessage();
+            }
+            return gson.toJson(out);
+        });
+
+        // REIMPORT: re-runs the stored Excel file with the saved config.
+        post("/api/reimport", (req, res) -> {
+            res.type("application/json");
+            ApiResponse out = new ApiResponse();
+            try {
+                Path storedFile = dataDir.resolve("last_import.xlsx");
+                if (!Files.exists(storedFile)) {
+                    out.success = false;
+                    out.error = "No previously imported file found.";
+                    return gson.toJson(out);
+                }
+
+                Path configFile = dataDir.resolve("header_config.json");
+                if (!Files.exists(configFile)) {
+                    out.success = false;
+                    out.error = "No column config saved. Import with the picker first.";
+                    return gson.toJson(out);
+                }
+
+                JsonObject mappingConfig = gson.fromJson(
+                        Files.readString(configFile), JsonObject.class);
+
+                String summary = ExcelImporter.importShopData(
+                        storedFile.toFile(), dataDir, gson, mappingConfig);
+
+                out.success = true;
+                out.data = summary;
+            } catch (Exception e) {
+                out.success = false;
+                out.error = e.getMessage();
+            }
+            return gson.toJson(out);
+        });
+
+        // Reports whether a stored sheet exists so the frontend can enable the refresh button.
+        get("/api/has-stored-file", (req, res) -> {
+            res.type("application/json");
+            Path storedFile = dataDir.resolve("last_import.xlsx");
+            JsonObject payload = new JsonObject();
+            payload.addProperty("exists", Files.exists(storedFile));
+            if (Files.exists(storedFile)) {
+                payload.addProperty("modified", Files.getLastModifiedTime(storedFile).toString());
+            }
+            return gson.toJson(payload);
+        });
+
         post("/api/groq", (req, res) -> {
             res.type("application/json");
             ApiResponse out = new ApiResponse();
@@ -244,20 +310,17 @@ public class ShopServer {
 
                 JsonArray messagesArray = new JsonArray();
 
-                // System message: sets persona and rules once per conversation
                 JsonObject systemMsg = new JsonObject();
                 systemMsg.addProperty("role", "system");
                 systemMsg.addProperty("content", SYSTEM_PROMPT);
                 messagesArray.add(systemMsg);
 
-                // Replay prior turns so the model has context
                 if (input.chat_history != null) {
                     for (JsonElement el : input.chat_history) {
                         messagesArray.add(el);
                     }
                 }
 
-                // Current turn: the technician's latest note, framed as the actual question
                 JsonObject userMsg = new JsonObject();
                 userMsg.addProperty("role", "user");
                 userMsg.addProperty("content", String.format(
@@ -304,7 +367,76 @@ public class ShopServer {
             return gson.toJson(out);
         });
 
-        // Save technician notes AND chat history atomically back to diagnostics.json
+        post("/api/save-config", (req, res) -> {
+            res.type("application/json");
+            ApiResponse out = new ApiResponse();
+            try {
+                JsonObject incoming = gson.fromJson(req.body(), JsonObject.class);
+                Path configFile = dataDir.resolve("header_config.json");
+                Files.writeString(configFile, gson.toJson(incoming));
+                out.success = true;
+                out.data = "Config saved.";
+            } catch (Exception e) {
+                out.success = false;
+                out.error = e.getMessage();
+            }
+            return gson.toJson(out);
+        });
+
+        post("/api/clear-all", (req, res) -> {
+            res.type("application/json");
+            ApiResponse out = new ApiResponse();
+            try {
+                Files.writeString(dataDir.resolve("repairs.json"), "{}");
+                Files.writeString(dataDir.resolve("diagnostics.json"), "{}");
+                out.success = true;
+                out.data = "All jobs cleared.";
+            } catch (Exception e) {
+                out.success = false;
+                out.error = e.getMessage();
+            }
+            return gson.toJson(out);
+        });
+
+        post("/api/delete-job", (req, res) -> {
+            res.type("application/json");
+            ApiResponse out = new ApiResponse();
+            try {
+                JsonObject incoming = gson.fromJson(req.body(), JsonObject.class);
+                String targetId = incoming.get("id").getAsString();
+
+                Path diagFile = dataDir.resolve("diagnostics.json");
+                Path repairsFile = dataDir.resolve("repairs.json");
+
+                JsonObject diagData = Files.exists(diagFile)
+                        ? gson.fromJson(Files.readString(diagFile), JsonObject.class)
+                        : new JsonObject();
+                JsonObject repairsData = Files.exists(repairsFile)
+                        ? gson.fromJson(Files.readString(repairsFile), JsonObject.class)
+                        : new JsonObject();
+
+                diagData.remove(targetId);
+                repairsData.remove(targetId);
+
+                Files.writeString(diagFile, gson.toJson(diagData));
+                Files.writeString(repairsFile, gson.toJson(repairsData));
+
+                out.success = true;
+                out.data = "Job " + targetId + " deleted.";
+            } catch (Exception e) {
+                out.success = false;
+                out.error = e.getMessage();
+            }
+            return gson.toJson(out);
+        });
+
+        get("/api/repairs", (req, res) -> {
+            res.type("application/json");
+            Path repairsFile = dataDir.resolve("repairs.json");
+            if (!Files.exists(repairsFile)) return "{}";
+            return Files.readString(repairsFile);
+        });
+
         post("/api/notes", (req, res) -> {
             res.type("application/json");
             ApiResponse out = new ApiResponse();
@@ -328,7 +460,6 @@ public class ShopServer {
                         targetPc.add("chat_history", incoming.get("chat_history").getAsJsonArray());
                     }
 
-                    // Back up the current file before we touch it.
                     if (Files.exists(diagFile)) {
                         Path backupFile = diagFile.resolveSibling("diagnostics.bak");
                         try {
