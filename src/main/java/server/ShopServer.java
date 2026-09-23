@@ -182,7 +182,6 @@ public class ShopServer {
             return Files.readString(diagFile);
         });
 
-        // PREVIEW: Reads headers and returns them along with any saved column config
         post("/api/preview", (req, res) -> {
             res.type("application/json");
             ApiResponse out = new ApiResponse();
@@ -211,7 +210,6 @@ public class ShopServer {
             return gson.toJson(out);
         });
 
-        // IMPORT: Reads config, saves the sheet, imports. Stores a copy as last_import.xlsx.
         post("/api/import", (req, res) -> {
             res.type("application/json");
             ApiResponse out = new ApiResponse();
@@ -232,7 +230,6 @@ public class ShopServer {
                     Path tempFile = Files.createTempFile("import_", ".xlsx");
                     Files.copy(fileStream, tempFile, StandardCopyOption.REPLACE_EXISTING);
 
-                    // Persist the sheet so the refresh button can find it later.
                     Path storedFile = dataDir.resolve("last_import.xlsx");
                     Files.copy(tempFile, storedFile, StandardCopyOption.REPLACE_EXISTING);
 
@@ -249,7 +246,6 @@ public class ShopServer {
             return gson.toJson(out);
         });
 
-        // REIMPORT: re-runs the stored Excel file with the saved config.
         post("/api/reimport", (req, res) -> {
             res.type("application/json");
             ApiResponse out = new ApiResponse();
@@ -283,7 +279,6 @@ public class ShopServer {
             return gson.toJson(out);
         });
 
-        // Reports whether a stored sheet exists so the frontend can enable the refresh button.
         get("/api/has-stored-file", (req, res) -> {
             res.type("application/json");
             Path storedFile = dataDir.resolve("last_import.xlsx");
@@ -423,6 +418,56 @@ public class ShopServer {
 
                 out.success = true;
                 out.data = "Job " + targetId + " deleted.";
+            } catch (Exception e) {
+                out.success = false;
+                out.error = e.getMessage();
+            }
+            return gson.toJson(out);
+        });
+
+        // Updates the status field on a job. Valid values: "open", "fixed", "unfixed".
+        post("/api/set-status", (req, res) -> {
+            res.type("application/json");
+            ApiResponse out = new ApiResponse();
+            try {
+                JsonObject incoming = gson.fromJson(req.body(), JsonObject.class);
+                String targetId = incoming.get("id").getAsString();
+                String status = incoming.get("status").getAsString();
+
+                if (!status.equals("open") && !status.equals("fixed") && !status.equals("unfixed")) {
+                    out.success = false;
+                    out.error = "Invalid status: " + status;
+                    return gson.toJson(out);
+                }
+
+                Path diagFile = dataDir.resolve("diagnostics.json");
+                JsonObject diagData = Files.exists(diagFile)
+                        ? gson.fromJson(Files.readString(diagFile), JsonObject.class)
+                        : new JsonObject();
+
+                if (!diagData.has(targetId)) {
+                    out.success = false;
+                    out.error = "Unit ID " + targetId + " not found.";
+                    return gson.toJson(out);
+                }
+
+                diagData.getAsJsonObject(targetId).addProperty("status", status);
+
+                Path backupFile = diagFile.resolveSibling("diagnostics.bak");
+                try {
+                    Files.copy(diagFile, backupFile, StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException ignored) {}
+
+                Path tempFile = diagFile.resolveSibling("diagnostics.tmp");
+                Files.writeString(tempFile, gson.toJson(diagData));
+                try {
+                    Files.move(tempFile, diagFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(tempFile, diagFile, StandardCopyOption.REPLACE_EXISTING);
+                }
+
+                out.success = true;
+                out.data = "Status set to " + status;
             } catch (Exception e) {
                 out.success = false;
                 out.error = e.getMessage();

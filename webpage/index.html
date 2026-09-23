@@ -29,7 +29,12 @@
             <button onclick="executeImport()" class="btn btn-wide">Confirm &amp; Import</button>
           </div>
         </div>
+
+        <div class="queue-filter">
+          <label><input type="checkbox" id="hideFixed" onchange="renderQueue()"> Hide fixed</label>
+        </div>
       </div>
+
       <ul class="queue-list" id="queueList">
         <!-- Populated by JS -->
       </ul>
@@ -38,8 +43,15 @@
     <!-- Main Workbench Area -->
     <div class="workbench">
       <div class="header">
-        <h1 id="activeId">Select a PC</h1>
-        <span id="activeStatus"></span>
+        <div class="header-left">
+          <h1 id="activeId">Select a PC</h1>
+          <span id="statusDot" class="status-dot" style="display: none;"></span>
+        </div>
+        <div class="status-buttons" id="statusButtons" style="display: none;">
+          <button class="btn btn-small btn-status-fixed" onclick="setStatus('fixed')">Mark Fixed</button>
+          <button class="btn btn-small btn-status-unfixed" onclick="setStatus('unfixed')">Mark Unfixed</button>
+          <button class="btn btn-small btn-status-open" onclick="setStatus('open')">Clear Status</button>
+        </div>
       </div>
 
       <div class="workbench-columns">

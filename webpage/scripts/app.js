@@ -60,12 +60,21 @@ function displayIdFor(id) {
     return id;
 }
 
+function statusFor(id) {
+    const data = diagnosticsDb[id];
+    return (data && data.status) ? data.status : 'open';
+}
+
 function renderQueue() {
     const list = document.getElementById('queueList');
+    const hideFixed = document.getElementById('hideFixed')?.checked;
     list.innerHTML = '';
     for (const [id, data] of Object.entries(diagnosticsDb)) {
+        const status = data.status || 'open';
+        if (hideFixed && status === 'fixed') continue;
+
         const li = document.createElement('li');
-        li.className = 'queue-item';
+        li.className = 'queue-item status-' + status;
         const label = displayIdFor(id);
         const desc = (data.hardware || 'Unknown').split('|')[0].split(',')[0];
         li.innerHTML = `<div class="queue-id">${label}</div><div class="queue-desc">${desc}</div>`;
@@ -87,7 +96,48 @@ function loadPC(id, element) {
     document.getElementById('hwData').innerText = data.hardware || 'None recorded';
     document.getElementById('manualNotes').value = data.notes_so_far || '';
 
+    applyStatusToUI();
     renderChatHistory();
+}
+
+function applyStatusToUI() {
+    const dot = document.getElementById('statusDot');
+    const buttons = document.getElementById('statusButtons');
+
+    if (!currentId) {
+        dot.style.display = 'none';
+        buttons.style.display = 'none';
+        return;
+    }
+
+    const status = statusFor(currentId);
+    dot.className = 'status-dot' + (status !== 'open' ? ' ' + status : '');
+    dot.style.display = 'inline-block';
+    dot.title = status === 'fixed' ? 'Fixed'
+              : status === 'unfixed' ? 'Not fixed'
+              : 'Not worked on';
+    buttons.style.display = 'flex';
+}
+
+async function setStatus(status) {
+    if (!currentId) return alert("Select a PC first.");
+    try {
+        const response = await fetch('/api/set-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: currentId, status: status })
+        });
+        const result = await response.json();
+        if (result.success) {
+            diagnosticsDb[currentId].status = status;
+            applyStatusToUI();
+            renderQueue();
+        } else {
+            alert("Failed: " + result.error);
+        }
+    } catch (err) {
+        alert("Failed to connect to backend.");
+    }
 }
 
 function renderChatHistory() {
@@ -281,8 +331,6 @@ async function saveNotesSilently() {
     } catch (ignored) {}
 }
 
-// ---------- Excel import ----------
-
 async function previewExcel() {
     const fileInput = document.getElementById('excelFile');
     if (!fileInput.files[0] && !selectedFile) {
@@ -422,6 +470,7 @@ async function clearAllJobs() {
             document.getElementById('manualNotes').value = '';
             document.getElementById('aiOutput').innerHTML =
                 '<span class="placeholder-text">Click "Generate Steps" to request a troubleshooting checklist...</span>';
+            applyStatusToUI();
         } else {
             alert("Failed: " + result.error);
         }

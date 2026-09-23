@@ -43,7 +43,6 @@ public class ExcelImporter {
                 ? gson.fromJson(Files.readString(diagnosticsFile), JsonObject.class)
                 : new JsonObject();
 
-        // Reverse map: display_id -> internal JL-x key.
         Map<String, String> displayIdToKey = new HashMap<>();
         for (String key : repairsDb.keySet()) {
             JsonObject rec = repairsDb.getAsJsonObject(key);
@@ -134,7 +133,6 @@ public class ExcelImporter {
                         displayId.isEmpty() ? diagnosticRef : displayId);
                 repairsDb.add(diagnosticRef, repairRecord);
 
-                // Preserve notes and chat history from the existing record, if any.
                 JsonObject existing = diagDb.has(diagnosticRef)
                         ? diagDb.getAsJsonObject(diagnosticRef)
                         : new JsonObject();
@@ -149,6 +147,11 @@ public class ExcelImporter {
 
                 if (existing.has("chat_history")) {
                     diagnosticRecord.add("chat_history", existing.get("chat_history"));
+                }
+                if (existing.has("status")) {
+                    diagnosticRecord.add("status", existing.get("status"));
+                } else {
+                    diagnosticRecord.addProperty("status", "open");
                 }
 
                 diagDb.add(diagnosticRef, diagnosticRecord);
